@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kalasin Weather & IoT Sensor Dashboard</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Google Fonts Prompt -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Prompt', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              900: '#0c4a6e',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      font-family: 'Prompt', sans-serif;
+      background-color: #0f172a;
+      color: #f8fafc;
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card-hover:hover {
+      border-color: rgba(56, 189, 248, 0.4);
+      transform: translateY(-2px);
+      transition: all 0.2s ease;
+    }
+    .pulse-dot {
+      box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+      animation: pulse-green 2s infinite;
+    }
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+      70% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+
+  <!-- Navigation Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="p-2.5 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded-xl">
+          <i class="fa-solid fa-microchip text-2xl"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold text-white flex items-center gap-2">
+            Kalasin IoT Monitor
+            <span class="text-xs px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-medium border border-sky-500/30">ESP32 + DHT22</span>
+          </h1>
+          <p class="text-xs text-slate-400">ระบบติดตามอุณหภูมิและความชื้น สภาพอากาศจังหวัดกาฬสินธุ์</p>
+        </div>
+      </div>
+
+      <!-- Controls & Status -->
+      <div class="flex items-center gap-3">
+        <div id="sync-status" class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 pulse-dot"></span>
+          <span id="status-text">พร้อมใช้งาน</span>
+        </div>
+
+        <button onclick="fetchData()" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-lg shadow-sky-600/20 active:scale-95">
+          <i id="refresh-icon" class="fa-solid fa-rotate"></i>
+          <span>รีเฟรช</span>
+        </button>
+
+        <select id="auto-refresh-select" onchange="changeAutoRefresh()" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-sky-500">
+          <option value="5000">อัปเดตทุก 5 วินาที</option>
+          <option value="10000" selected>อัปเดตทุก 10 วินาที</option>
+          <option value="30000">อัปเดตทุก 30 วินาที</option>
+          <option value="0">ปิดการอัปเดตอัตโนมัติ</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- Notification / Info Banner -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="p-2 bg-amber-500/10 text-amber-400 rounded-lg shrink-0">
+          <i class="fa-solid fa-database text-lg"></i>
+        </div>
+        <div class="text-xs">
+          <span class="font-semibold text-slate-200">เชื่อมต่อตาราง Google Sheets:</span>
+          <span class="text-slate-400 block sm:inline sm:ml-1 font-mono break-all">1QQ0jbdF5_Wgxmq7tq9sczCOvJegaDXp5w04A0T8JXV4</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-slate-400">
+        <i class="fa-solid fa-clock"></i>
+        <span>อัปเดตล่าสุด: <span id="last-update-time" class="text-slate-200 font-medium">-</span></span>
+      </div>
+    </div>
+
+    <!-- Top Metric Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Temperature Card -->
+      <div class="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
+        <div class="absolute -right-4 -bottom-4 opacity-10 text-red-500 text-8xl pointer-events-none">
+          <i class="fa-solid fa-temperature-three-quarters"></i>
+        </div>
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">อุณหภูมิเซนเซอร์</span>
+          <div class="p-2 bg-red-500/10 text-red-400 rounded-xl border border-red-500/20">
+            <i class="fa-solid fa-temperature-half"></i>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="current-temp" class="text-3xl font-bold text-white">--</span>
+          <span class="text-lg text-slate-400 font-medium">°C</span>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <span>สูงสุด/ต่ำสุด วันนี้</span>
+          <span id="temp-minmax" class="text-slate-200 font-medium">-- / -- °C</span>
+        </div>
+      </div>
+
+      <!-- Humidity Card -->
+      <div class="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
+        <div class="absolute -right-4 -bottom-4 opacity-10 text-cyan-500 text-8xl pointer-events-none">
+          <i class="fa-solid fa-droplet"></i>
+        </div>
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">ความชื้นเซนเซอร์</span>
+          <div class="p-2 bg-cyan-500/10 text-cyan-400 rounded-xl border border-cyan-500/20">
+            <i class="fa-solid fa-droplet"></i>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="current-humi" class="text-3xl font-bold text-white">--</span>
+          <span class="text-lg text-slate-400 font-medium">%</span>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <span>สูงสุด/ต่ำสุด วันนี้</span>
+          <span id="humi-minmax" class="text-slate-200 font-medium">-- / -- %</span>
+        </div>
+      </div>
+
+      <!-- LED Status Indicator (Based on ESP32 logic: h < 25 -> LED ON) -->
+      <div class="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">สถานะ LED (Pin 2)</span>
+          <div id="led-icon-bg" class="p-2 bg-slate-800 text-slate-500 rounded-xl border border-slate-700">
+            <i id="led-icon" class="fa-solid fa-lightbulb"></i>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="led-status-text" class="text-2xl font-bold text-slate-400">--</span>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <span>เงื่อนไขควบคุม</span>
+          <span class="text-slate-300 font-mono">ความชื้น &lt; 25% (เปิด)</span>
+        </div>
+      </div>
+
+      <!-- Kalasin Open-Meteo Weather Comparison -->
+      <div class="glass-card glass-card-hover rounded-2xl p-5 relative overflow-hidden">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">สภาพอากาศกาฬสินธุ์ (API)</span>
+          <div class="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20">
+            <i class="fa-solid fa-cloud-sun"></i>
+          </div>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="api-temp" class="text-3xl font-bold text-emerald-400">--</span>
+          <span class="text-lg text-slate-400 font-medium">°C</span>
+        </div>
+        <div class="mt-4 pt-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+          <span>ข้อมูลจาก Open-Meteo</span>
+          <span class="text-emerald-400 font-medium flex items-center gap-1">
+            <i class="fa-solid fa-location-dot"></i> กาฬสินธุ์
+          </span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Chart & Gauge Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- Historical Line Chart (Takes 2 Columns) -->
+      <div class="glass-card rounded-2xl p-5 lg:col-span-2 flex flex-col justify-between">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div>
+            <h2 class="text-base font-semibold text-white flex items-center gap-2">
+              <i class="fa-solid fa-chart-line text-sky-400"></i>
+              กราฟการเปลี่ยนแปลงตามเวลา
+            </h2>
+            <p class="text-xs text-slate-400">แสดงผลเปรียบเทียบอุณหภูมิและความชื้นสัมพัทธ์</p>
+          </div>
+          <div class="flex items-center gap-2 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
+            <button onclick="setChartFilter(10)" id="filter-10" class="px-2.5 py-1 text-xs rounded-lg bg-sky-600 text-white font-medium transition-all">10 ล่าสุด</button>
+            <button onclick="setChartFilter(30)" id="filter-30" class="px-2.5 py-1 text-xs rounded-lg text-slate-400 hover:text-white transition-all">30 ล่าสุด</button>
+            <button onclick="setChartFilter(0)" id="filter-all" class="px-2.5 py-1 text-xs rounded-lg text-slate-400 hover:text-white transition-all">ทั้งหมด</button>
+          </div>
+        </div>
+
+        <div class="relative flex-1 min-h-[300px]">
+          <canvas id="historyChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Gauges & Comfort Level -->
+      <div class="glass-card rounded-2xl p-5 flex flex-col justify-between space-y-4">
+        <div>
+          <h2 class="text-base font-semibold text-white flex items-center gap-2 mb-1">
+            <i class="fa-solid fa-gauge-high text-amber-400"></i>
+            ระดับความสบายและความชื้น
+          </h2>
+          <p class="text-xs text-slate-400">การประเมินสภาวะแวดล้อมปัจจุบัน</p>
+        </div>
+
+        <!-- Temperature Progress Meter -->
+        <div class="space-y-2">
+          <div class="flex justify-between text-xs">
+            <span class="text-slate-400">เกณฑ์อุณหภูมิ (°C)</span>
+            <span id="temp-indicator-text" class="text-sky-400 font-medium">ปกติ</span>
+          </div>
+          <div class="h-3 w-full bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
+            <div id="temp-progress-bar" class="h-full bg-gradient-to-r from-blue-500 via-amber-500 to-red-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-slate-500">
+            <span>0°C (หนาว)</span>
+            <span>25°C (พอเหมาะ)</span>
+            <span>50°C (ร้อนจัด)</span>
+          </div>
+        </div>
+
+        <!-- Humidity Progress Meter -->
+        <div class="space-y-2">
+          <div class="flex justify-between text-xs">
+            <span class="text-slate-400">เกณฑ์ความชื้น (%)</span>
+            <span id="humi-indicator-text" class="text-cyan-400 font-medium">ปกติ</span>
+          </div>
+          <div class="h-3 w-full bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700">
+            <div id="humi-progress-bar" class="h-full bg-gradient-to-r from-amber-500 via-emerald-500 to-cyan-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <div class="flex justify-between text-[10px] text-slate-500">
+            <span>0% (แห้ง)</span>
+            <span>25% (เกณฑ์ LED)</span>
+            <span>100% (ชื้นมาก)</span>
+          </div>
+        </div>
+
+        <!-- Quick Summary Box -->
+        <div id="comfort-box" class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs space-y-1.5">
+          <div class="flex items-center gap-2 font-medium text-slate-200">
+            <i class="fa-solid fa-circle-info text-sky-400"></i>
+            <span>ข้อสรุปสภาพแวดล้อม</span>
+          </div>
+          <p id="comfort-desc" class="text-slate-400 leading-relaxed">กำลังคำนวณข้อมูลสภาพอากาศ...</p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Data Log Table -->
+    <div class="glass-card rounded-2xl p-5 space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 class="text-base font-semibold text-white flex items-center gap-2">
+            <i class="fa-solid fa-table-list text-emerald-400"></i>
+            ประวัติการบันทึกข้อมูล (Google Sheets Log)
+          </h2>
+          <p class="text-xs text-slate-400">แสดงรายการข้อมูลทั้งหมดที่ได้รับจากบอร์ด ESP32</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <div class="relative">
+            <input type="text" id="search-input" onkeyup="filterTable()" placeholder="ค้นหาวันที่/เวลา..." class="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 pl-8 focus:outline-none focus:border-sky-500 w-44 sm:w-56">
+            <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-slate-500 text-xs"></i>
+          </div>
+          <button onclick="exportCSV()" class="px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-medium flex items-center gap-1.5 transition-all">
+            <i class="fa-solid fa-file-csv"></i>
+            <span>ส่งออก CSV</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Table Container -->
+      <div class="overflow-x-auto rounded-xl border border-slate-800">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-900/90 text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <tr>
+              <th class="py-3 px-4">#</th>
+              <th class="py-3 px-4">วันเวลา (Timestamp)</th>
+              <th class="py-3 px-4 text-center">อุณหภูมิ (°C)</th>
+              <th class="py-3 px-4 text-center">ความชื้น (%)</th>
+              <th class="py-3 px-4 text-center">สถานะ LED</th>
+            </tr>
+          </thead>
+          <tbody id="table-body" class="divide-y divide-slate-800/60 bg-slate-900/40">
+            <tr>
+              <td colspan="5" class="py-8 text-center text-slate-500">
+                <i class="fa-solid fa-spinner fa-spin text-lg mb-2 block"></i>
+                กำลังโหลดข้อมูลจาก Google Sheets...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-500">
+    <p>© 2026 Kalasin IoT Monitoring System | ESP32 + DHT22 + Open-Meteo API</p>
+  </footer>
+
+  <!-- JavaScript Logic -->
+  <script>
+    // Configuration
+    const SPREADSHEET_ID = '1QQ0jbdF5_Wgxmq7tq9sczCOvJegaDXp5w04A0T8JXV4';
+    const GOOGLE_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv`;
+    const KALASIN_API_URL = 'https://api.open-meteo.com/v1/forecast?latitude=16.4322&longitude=103.5064&current_weather=true';
+
+    let rawDataList = [];
+    let historyChart = null;
+    let autoRefreshInterval = null;
+    let currentFilterCount = 10;
+
+    function initChart() {
+      const ctx = document.getElementById('historyChart').getContext('2d');
+      historyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'อุณหภูมิ (°C)',
+              borderColor: '#f43f5e',
+              backgroundColor: 'rgba(244, 63, 94, 0.1)',
+              borderWidth: 2,
+              pointBackgroundColor: '#f43f5e',
+              pointRadius: 4,
+              fill: true,
+              tension: 0.3,
+              data: []
+            },
+            {
+              label: 'ความชื้น (%)',
+              borderColor: '#06b6d4',
+              backgroundColor: 'rgba(6, 182, 212, 0.1)',
+              borderWidth: 2,
+              pointBackgroundColor: '#06b6d4',
+              pointRadius: 4,
+              fill: true,
+              tension: 0.3,
+              data: []
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              labels: {
+                color: '#94a3b8',
+                font: { family: 'Prompt', size: 12 }
+              }
+            },
+            tooltip: {
+              backgroundColor: '#1e293b',
+              titleColor: '#f8fafc',
+              bodyColor: '#cbd5e1',
+              borderColor: 'rgba(255,255,255,0.1)',
+              borderWidth: 1,
+              padding: 10,
+              displayColors: true,
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#64748b', font: { family: 'Prompt', size: 10 } },
+              grid: { color: 'rgba(255,255,255,0.05)' }
+            },
+            y: {
+              ticks: { color: '#64748b', font: { family: 'Prompt', size: 10 } },
+              grid: { color: 'rgba(255,255,255,0.05)' }
+            }
+          }
+        }
+      });
+    }
+
+    async function fetchData() {
+      const refreshIcon = document.getElementById('refresh-icon');
+      const statusText = document.getElementById('status-text');
+      refreshIcon.classList.add('fa-spin');
+      statusText.innerText = 'กำลังซิงค์...';
+
+      try {
+        // Fetch Google Sheet CSV
+        const response = await fetch(GOOGLE_SHEET_CSV_URL + '&t=' + new Date().getTime());
+        const csvText = await response.text();
+        
+        parseCSVData(csvText);
+        fetchKalasinWeather();
+
+        statusText.innerText = 'อัปเดตแล้ว';
+        document.getElementById('last-update-time').innerText = new Date().toLocaleTimeString('th-TH');
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        statusText.innerText = 'เชื่อมต่อล้มเหลว';
+      } finally {
+        setTimeout(() => refreshIcon.classList.remove('fa-spin'), 600);
+      }
+    }
+
+    function parseCSVData(csvText) {
+      const lines = csvText.split('\n');
+      rawDataList = [];
+
+      // Start from index 1 (Skip header line)
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        // Parse CSV row respecting quotes
+        const cols = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g) || line.split(',');
+        if (cols.length >= 3) {
+          const timestamp = cols[0].replace(/"/g, '').trim();
+          const tempVal = parseFloat(cols[1].replace(/"/g, '').trim());
+          const humiVal = parseFloat(cols[2].replace(/"/g, '').trim());
+
+          if (!isNaN(tempVal) && !isNaN(humiVal)) {
+            rawDataList.push({
+              timestamp: timestamp,
+              temp: tempVal,
+              humi: humiVal
+            });
+          }
+        }
+      }
+
+      updateDashboardUI();
+    }
+
+    function updateDashboardUI() {
+      if (rawDataList.length === 0) {
+        document.getElementById('table-body').innerHTML = `
+          <tr><td colspan="5" class="py-6 text-center text-slate-500">ไม่พบข้อมูลในระบบ</td></tr>
+        `;
+        return;
+      }
+
+      // Latest record
+      const latest = rawDataList[rawDataList.length - 1];
+
+      // Update current values
+      document.getElementById('current-temp').innerText = latest.temp.toFixed(1);
+      document.getElementById('current-humi').innerText = latest.humi.toFixed(1);
+
+      // Min/Max values
+      const temps = rawDataList.map(d => d.temp);
+      const humis = rawDataList.map(d => d.humi);
+      const minTemp = Math.min(...temps).toFixed(1);
+      const maxTemp = Math.max(...temps).toFixed(1);
+      const minHumi = Math.min(...humis).toFixed(1);
+      const maxHumi = Math.max(...humis).toFixed(1);
+
+      document.getElementById('temp-minmax').innerText = `${maxTemp} / ${minTemp} °C`;
+      document.getElementById('humi-minmax').innerText = `${maxHumi} / ${minHumi} %`;
+
+      // LED Logic: Humidity < 25% -> LED ON
+      const isLedOn = latest.humi < 25;
+      const ledIcon = document.getElementById('led-icon');
+      const ledIconBg = document.getElementById('led-icon-bg');
+      const ledText = document.getElementById('led-status-text');
+
+      if (isLedOn) {
+        ledText.innerText = 'เปิด (ON)';
+        ledText.className = 'text-2xl font-bold text-amber-400';
+        ledIconBg.className = 'p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 animate-pulse';
+        ledIcon.className = 'fa-solid fa-lightbulb text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]';
+      } else {
+        ledText.innerText = 'ปิด (OFF)';
+        ledText.className = 'text-2xl font-bold text-slate-400';
+        ledIconBg.className = 'p-2 bg-slate-800 text-slate-500 rounded-xl border border-slate-700';
+        ledIcon.className = 'fa-solid fa-lightbulb';
+      }
+
+      // Progress bars & indicators
+      const tempPercent = Math.min(Math.max((latest.temp / 50) * 100, 0), 100);
+      const humiPercent = Math.min(Math.max(latest.humi, 0), 100);
+
+      document.getElementById('temp-progress-bar').style.width = `${tempPercent}%`;
+      document.getElementById('humi-progress-bar').style.width = `${humiPercent}%`;
+
+      // Comfort summary logic
+      let comfortText = "";
+      if (latest.temp > 35) comfortText = "สภาพอากาศร้อนสะสม ควรระวังความร้อนในพื้นที่";
+      else if (latest.temp < 20) comfortText = "สภาพอากาศเย็นสบาย";
+      else comfortText = "อุณหภูมิอยู่ในเกณฑ์ปกติ";
+
+      if (latest.humi < 25) comfortText += " | ความชื้นต่ำกว่า 25% (ระบบเปิดไฟ LED อัตโนมัติ)";
+      else comfortText += " | ความชื้นอยู่ในเกณฑ์ปกติ";
+
+      document.getElementById('comfort-desc').innerText = comfortText;
+
+      // Update Chart
+      updateChartData();
+
+      // Update Table
+      renderTable();
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+
+      // Show reversed list (newest first)
+      const displayData = [...rawDataList].reverse();
+
+      displayData.forEach((item, index) => {
+        const isLedOn = item.humi < 25;
+        const rowNum = rawDataList.length - index;
+
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-800/50 transition-colors';
+        tr.innerHTML = `
+          <td class="py-3 px-4 font-mono text-slate-500">${rowNum}</td>
+          <td class="py-3 px-4 font-medium text-slate-200">${item.timestamp}</td>
+          <td class="py-3 px-4 text-center font-semibold text-rose-400">${item.temp.toFixed(1)} °C</td>
+          <td class="py-3 px-4 text-center font-semibold text-cyan-400">${item.humi.toFixed(1)} %</td>
+          <td class="py-3 px-4 text-center">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium ${isLedOn ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-slate-800 text-slate-400'}">
+              <span class="w-1.5 h-1.5 rounded-full ${isLedOn ? 'bg-amber-400 animate-ping' : 'bg-slate-500'}"></span>
+              ${isLedOn ? 'ON' : 'OFF'}
+            </span>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateChartData() {
+      if (!historyChart) return;
+
+      let dataToDisplay = rawDataList;
+      if (currentFilterCount > 0 && rawDataList.length > currentFilterCount) {
+        dataToDisplay = rawDataList.slice(-currentFilterCount);
+      }
+
+      historyChart.data.labels = dataToDisplay.map(d => {
+        // Extract time portion if available
+        const parts = d.timestamp.split(',');
+        return parts.length > 1 ? parts[1].trim() : d.timestamp;
+      });
+
+      historyChart.data.datasets[0].data = dataToDisplay.map(d => d.temp);
+      historyChart.data.datasets[1].data = dataToDisplay.map(d => d.humi);
+      historyChart.update();
+    }
+
+    function setChartFilter(count) {
+      currentFilterCount = count;
+      ['10', '30', 'all'].forEach(id => {
+        const btn = document.getElementById(`filter-${id}`);
+        if (btn) {
+          btn.className = (id === 'all' && count === 0) || (id === count.toString())
+            ? 'px-2.5 py-1 text-xs rounded-lg bg-sky-600 text-white font-medium transition-all'
+            : 'px-2.5 py-1 text-xs rounded-lg text-slate-400 hover:text-white transition-all';
+        }
+      });
+      updateChartData();
+    }
+
+    async function fetchKalasinWeather() {
+      try {
+        const res = await fetch(KALASIN_API_URL);
+        const data = await res.json();
+        if (data.current_weather) {
+          document.getElementById('api-temp').innerText = data.current_weather.temperature.toFixed(1);
+        }
+      } catch (err) {
+        console.warn('Weather API fetch failed:', err);
+      }
+    }
+
+    function filterTable() {
+      const filter = document.getElementById('search-input').value.toLowerCase();
+      const rows = document.getElementById('table-body').getElementsByTagName('tr');
+
+      for (let row of rows) {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(filter) ? '' : 'none';
+      }
+    }
+
+    function exportCSV() {
+      if (rawDataList.length === 0) return;
+      let csvContent = "data:text/csv;charset=utf-8,Timestamp,Temperature_C,Humidity_Percent\n";
+      rawDataList.forEach(row => {
+        csvContent += `"${row.timestamp}",${row.temp},${row.humi}\n`;
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `Kalasin_IoT_Data_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function changeAutoRefresh() {
+      const val = parseInt(document.getElementById('auto-refresh-select').value);
+      if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+
+      if (val > 0) {
+        autoRefreshInterval = setInterval(fetchData, val);
+      }
+    }
+
+    // Initialize on Page Load
+    window.onload = () => {
+      initChart();
+      fetchData();
+      changeAutoRefresh();
+    };
+  </script>
+
+</body>
+</html>
